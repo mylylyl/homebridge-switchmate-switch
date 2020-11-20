@@ -1,16 +1,48 @@
 {
-  "pluginAlias": "ExampleHomebridgePlugin",
-  "pluginType": "platform",
-  "singular": true,
-  "schema": {
-    "type": "object",
-    "properties": {
-      "name": {
-        "title": "Name",
-        "type": "string",
-        "required": true,
-        "default": "Example Dynamic Platform"
-      }
-    }
-  }
+	"pluginAlias": "SwitchmateSwitch",
+	"pluginType": "platform",
+	"singular": true,
+	"schema": {
+		"type": "object",
+		"properties": {
+			"devices": {
+				"type": "array",
+				"title": "Devices",
+				"items": {
+					"type": "object",
+					"title": "Switch",
+					"properties": {
+						"name": {
+							"type": "string",
+							"title": "Switch Name",
+							"required": true,
+							"placeholder": "e.g. Living Room Switch",
+							"description": "Display Name you want to give this switch accessory in HomeKit. Each switch must have a unique name."
+						},
+						"id": {
+							"type": "string",
+							"title": "Switch MAC Address",
+							"required": true,
+							"placeholder": "e.g. d542c4c9a702",
+							"description": "MAC address of the switch you want to connect, without colon. You can find this info in the Switchmate app."
+						}
+					}
+				}
+			}
+		}
+	},
+	"layout": [
+		{
+			"key": "devices",
+			"type": "array",
+			"name": " ",
+			"description": "Provide the details of your switches.",
+			"orderable": true,
+			"buttonText": "Add Switch",
+			"items": [
+				"devices[].name",
+				"devices[].id"
+			]
+		}
+	]
 }

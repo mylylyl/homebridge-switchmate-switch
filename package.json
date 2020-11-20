@@ -1,41 +1,47 @@
 {
-  "private": true,
-  "displayName": "Plugin Name",
-  "name": "homebridge-plugin-name",
-  "version": "1.0.0",
-  "description": "A short description about what your plugin does.",
-  "license": "Apache-2.0",
-  "repository": {
-    "type": "git",
-    "url": "git://github.com/USERNAME/GITHUB_PROJECT_NAME.git"
-  },
-  "bugs": {
-    "url": "https://github.com/USERNAME/GITHUB_PROJECT_NAME/issues"
-  },
-  "engines": {
-    "node": ">=10.17.0",
-    "homebridge": ">=1.0.0"
-  },
-  "main": "dist/index.js",
-  "scripts": {
-    "lint": "eslint src/**.ts --max-warnings=0",
-    "watch": "npm run build && npm link && nodemon",
-    "build": "rimraf ./dist && tsc",
-    "prepublishOnly": "npm run lint && npm run build"
-  },
-  "keywords": [
-    "homebridge-plugin"
-  ],
-  "dependencies": {},
-  "devDependencies": {
-    "@types/node": "^14.14.6",
-    "@typescript-eslint/eslint-plugin": "^4.6.1",
-    "@typescript-eslint/parser": "^4.6.1",
-    "eslint": "^7.13.0",
-    "homebridge": "^1.2.3",
-    "nodemon": "^2.0.6",
-    "rimraf": "^3.0.2",
-    "ts-node": "^9.0.0",
-    "typescript": "^4.0.5"
-  }
+	"displayName": "Homebridge Switchmate Switch",
+	"name": "homebridge-switchmate-switch",
+	"version": "1.0.0",
+	"description": "A homebridge plugin for Switchmate switch",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git://github.com:fisherwise/homebridge-switchmate-switch.git"
+	},
+	"bugs": {
+		"url": "https://github.com/fisherwise/homebridge-switchmate-switch/issues"
+	},
+	"homepage": "https://github.com/fisherwise/homebridge-switchmate-switch/README.md",
+	"engines": {
+		"node": ">=10.17.0",
+		"homebridge": ">=1.0.0"
+	},
+	"main": "dist/index.js",
+	"scripts": {
+		"lint": "eslint src/**.ts --max-warnings=0",
+		"watch": "npm run build && npm link && nodemon",
+		"build": "rimraf ./dist && tsc",
+		"prepublishOnly": "npm run lint && npm run build"
+	},
+	"keywords": [
+		"homebridge-plugin",
+		"homebridge",
+		"Switchmate",
+		"Switchmate Switch",
+		"Switch"
+	],
+	"dependencies": {
+		"@abandonware/noble": "^1.9.2-10"
+	},
+	"devDependencies": {
+		"@types/node": "^14.14.6",
+		"@typescript-eslint/eslint-plugin": "^4.6.1",
+		"@typescript-eslint/parser": "^4.6.1",
+		"eslint": "^7.13.0",
+		"homebridge": "^1.2.3",
+		"nodemon": "^2.0.6",
+		"rimraf": "^3.0.2",
+		"ts-node": "^9.0.0",
+		"typescript": "^4.0.5"
+	}
 }
