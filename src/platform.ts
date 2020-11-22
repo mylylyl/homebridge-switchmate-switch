@@ -9,7 +9,6 @@ import { SwitchmateDevice } from './switchmateDevice';
 export interface SwitchmateSwitchPlatformConfig extends PlatformConfig {
 	devices: [{
 		name: string;
-		batteryName?: string;
 		id: string;
 	}];
 }

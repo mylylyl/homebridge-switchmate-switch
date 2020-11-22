@@ -19,13 +19,6 @@
 							"placeholder": "e.g. Living Room Switch",
 							"description": "Display Name you want to give this switch accessory in HomeKit. Each switch must have a unique name."
 						},
-						"batteryName": {
-							"type": "string",
-							"title": "Switch Battery Name",
-							"required": false,
-							"placeholder": "e.g. Living Room Switch Battery",
-							"description": "Display Name you want to the fake battery accessory in HomeKit. Each battery must have a unique name. Default: Switch Name Battery"
-						},
 						"id": {
 							"type": "string",
 							"title": "Switch MAC Address",
@@ -48,7 +41,6 @@
 			"buttonText": "Add Switch",
 			"items": [
 				"devices[].name",
-				"devices[].batteryName",
 				"devices[].id"
 			]
 		}
