@@ -4,26 +4,24 @@ import noble from '@abandonware/noble';
 // device information
 const INFO_SERVICE_UUID = '180a';
 const INFO_MANUFACTURER_CHARACTERISTIC_UUID = '2a29';
-const INFO_SERIAL_CHARACTERISTIC_UUID = '2a25';
+const INFO_MODEL_CHARACTERISTIC_UUID = '2a24';
 const INFO_HARDWARE_REVISION_CHARACTERISTIC_UUID = '2a27';
 const INFO_FIRMWARE_REVISION_CHARACTERISTIC_UUID = '2a26';
-const INFO_SOFTWARE_REVISION_CHARACTERISTIC_UUID = '2a28';
 // battery
 const BATTERY_SERVICE_UUID = '180f';
-const BATTERY_CHARACTERISTIC_UUID = '2a19';
+const BATTERY_LEVEL_CHARACTERISTIC_UUID = '2a19';
 // power control
 const POWER_SERVICE_UUID = 'a22bd383ebdd49acb2e740eb55f5d0ab';
-const POWER_WRITE_CHARACTERISTIC_UUID = 'a22b0090ebdd49acb2e740eb55f5d0ab';
-const POWER_NOTIFY_CHARACTERISTIC_UUID = 'a22b0070ebdd49acb2e740eb55f5d0ab';
+const POWER_CURRENT_CHARACTERISTIC_UUID = 'a22b0070ebdd49acb2e740eb55f5d0ab';
+const POWER_TARGET_CHARACTERISTIC_UUID = 'a22b0090ebdd49acb2e740eb55f5d0ab';
 // timeout
 const DEFAULT_TIMEOUT = 10000; // 10s
 
 export interface SwitchmateDeviceInformation {
 	manufacturer: string;
-	serial: string;
+	model: string;
 	hardwareRevision: string;
 	firmwareRevision: string;
-	softwareRevision: string;
 }
 
 export class SwitchmateDevice {
@@ -32,10 +30,9 @@ export class SwitchmateDevice {
 
 	private characteristics: {
 		battery: noble.Characteristic | null;
-		motor: {
-			state: noble.Characteristic | null;
+		power: {
+			current: noble.Characteristic | null;
 			target: noble.Characteristic | null;
-			control: noble.Characteristic | null;
 		};
 	};
 
@@ -48,10 +45,9 @@ export class SwitchmateDevice {
 
 		this.characteristics = {
 			battery: null,
-			motor: {
-				state: null,
+			power: {
+				current: null,
 				target: null,
-				control: null,
 			},
 		};
 	}
@@ -108,10 +104,9 @@ export class SwitchmateDevice {
 
 		const deviceInfo: SwitchmateDeviceInformation = {
 			manufacturer: 'Default Manufacturer',
-			serial: 'Default Serial',
+			model: 'Default Model',
 			hardwareRevision: 'Default Hardware Revision',
 			firmwareRevision: 'Default Firmware Revision',
-			softwareRevision: 'Default Software Revision',
 		};
 
 		const services = await this.peripheral.discoverServicesAsync([INFO_SERVICE_UUID]);
@@ -131,17 +126,14 @@ export class SwitchmateDevice {
 				case INFO_MANUFACTURER_CHARACTERISTIC_UUID:
 					deviceInfo.manufacturer = (await characteristic.readAsync()).toString();
 					break;
-				case INFO_SERIAL_CHARACTERISTIC_UUID:
-					deviceInfo.serial = (await characteristic.readAsync()).toString();
+				case INFO_MODEL_CHARACTERISTIC_UUID:
+					deviceInfo.model = (await characteristic.readAsync()).toString();
 					break;
 				case INFO_HARDWARE_REVISION_CHARACTERISTIC_UUID:
 					deviceInfo.hardwareRevision = (await characteristic.readAsync()).toString();
 					break;
 				case INFO_FIRMWARE_REVISION_CHARACTERISTIC_UUID:
 					deviceInfo.firmwareRevision = (await characteristic.readAsync()).toString();
-					break;
-				case INFO_SOFTWARE_REVISION_CHARACTERISTIC_UUID:
-					deviceInfo.softwareRevision = (await characteristic.readAsync()).toString();
 					break;
 				default:
 					break;
@@ -157,26 +149,181 @@ export class SwitchmateDevice {
 			return;
 		}
 
-		const services = await this.peripheral.discoverServicesAsync([POWER_SERVICE_UUID]);
-		if (!services || services.length !== 1 || services[0].uuid !== POWER_SERVICE_UUID) {
-			this.log.error('Invalid power services: %s', services.toString());
+		const services = await this.peripheral.discoverServicesAsync([BATTERY_SERVICE_UUID, POWER_SERVICE_UUID]);
+		if (!services || services.length !== 2 || services[0].uuid !== BATTERY_SERVICE_UUID || services[1].uuid !== POWER_SERVICE_UUID) {
+			this.log.error('Invalid services: %s', services.toString());
 			return;
 		}
 
-		const powerCharacteristics = await services[0].discoverCharacteristicsAsync();
-		if (!powerCharacteristics) {
+		const batteryCharacteristics = await services[0].discoverCharacteristicsAsync([BATTERY_LEVEL_CHARACTERISTIC_UUID]);
+		if (!batteryCharacteristics || batteryCharacteristics.length !== 1 || batteryCharacteristics[0].uuid !== BATTERY_LEVEL_CHARACTERISTIC_UUID) {
+			this.log.error('Invalid battery characteristics');
+			return;
+		}
+
+		this.characteristics.battery = batteryCharacteristics[0];
+
+		const powerCharacteristics = await services[1].discoverCharacteristicsAsync([POWER_CURRENT_CHARACTERISTIC_UUID, POWER_TARGET_CHARACTERISTIC_UUID]);
+		if (!powerCharacteristics || powerCharacteristics.length !== 2) {
 			this.log.error('Invalid power characteristics');
 			return;
 		}
 
-		this.log.debug('characteristics %d', powerCharacteristics.length);
-
 		for (const characteristic of powerCharacteristics) {
-			this.log.debug(characteristic.toString());
+			switch (characteristic.uuid) {
+				case POWER_CURRENT_CHARACTERISTIC_UUID:
+					this.characteristics.power.current = characteristic;
+					break;
+				case POWER_TARGET_CHARACTERISTIC_UUID:
+					this.characteristics.power.target = characteristic;
+					break;
+				default:
+					break;
+			}
 		}
 
 		this.log.debug('successfully get characteristics');
 		this.initialized = true;
+	}
+
+	async getBatteryLevel(): Promise<number> {
+		if (!this.connected) {
+			this.log.info('[getBatteryLevel] Peripheral not connected');
+			return this.connect().then(() => this.getBatteryLevel()).catch((error) => {
+				this.log.error('[getBatteryLevel] failed to get after trying to reconnect: %s', error);
+				return 0;
+			});
+		}
+
+		if (!this.initialized) {
+			this.log.error('[getBatteryLevel] Peripheral characteristics not initialized');
+			return this.getCharacteristics().then(() => this.getBatteryLevel()).catch((error) => {
+				this.log.error('[getBatteryLevel] failed to get after trying to get characteristics: %s', error);
+				return 0;
+			});
+		}
+
+		if (!this.characteristics.battery) {
+			this.log.error('[getBatteryLevel] Peripheral characteristic is invalid');
+			return 0;
+		}
+
+		return Promise.race([
+			await this.characteristics.battery.readAsync(),
+			new Promise((_, reject) => setTimeout(() => reject(new Error('[getBatteryLevel] timed out')), DEFAULT_TIMEOUT)),
+		]).then((buf) => {
+			if (buf instanceof Buffer) {
+				this.log.debug('[getBatteryLevel] return buf as buffer');
+				return (buf as Buffer)[0];
+			}
+			this.log.error('[getBatteryLevel] return buf as false');
+			return 0;
+		}).catch((error) => {
+			this.log.error('[getBatteryLevel] error: %s', error);
+			return 0;
+		});
+	}
+
+	async getCurrentState(): Promise<number> {
+		if (!this.connected) {
+			this.log.info('[getCurrentState] Peripheral not connected');
+			return this.connect().then(() => this.getCurrentState()).catch((error) => {
+				this.log.error('[getCurrentState] failed to get current state after trying to reconnect: %s', error);
+				return 0;
+			});
+		}
+
+		if (!this.initialized) {
+			this.log.error('[getCurrentState] Peripheral characteristics not initialized');
+			return this.getCharacteristics().then(() => this.getCurrentState()).catch((error) => {
+				this.log.error('[getCurrentState] failed to get current state after trying to get characteristics: %s', error);
+				return 0;
+			});
+		}
+
+		if (!this.characteristics.power.current) {
+			this.log.error('[getCurrentState] Peripheral characteristics.power.current is invalid');
+			return 0;
+		}
+
+		return Promise.race([
+			await this.characteristics.power.current.readAsync(),
+			new Promise((_, reject) => setTimeout(() => reject(new Error('[getCurrentState] timed out')), DEFAULT_TIMEOUT)),
+		]).then((buf) => {
+			if (buf instanceof Buffer) {
+				this.log.debug('[getCurrentState] return buf as buffer');
+				return (buf as Buffer)[0];
+			}
+			this.log.error('[getCurrentState] return buf as false');
+			return 0;
+		}).catch((error) => {
+			this.log.error('[getCurrentState] error: %s', error);
+			return 0;
+		});
+	}
+
+	async getTargetState(): Promise<number> {
+		if (!this.connected) {
+			this.log.info('[getTargetState] Peripheral not connected');
+			return this.connect().then(() => this.getTargetState()).catch((error) => {
+				this.log.error('[getTargetState] failed to get target state after trying to reconnect: %s', error);
+				return 0;
+			});
+		}
+
+		if (!this.initialized) {
+			this.log.error('[getTargetState] Peripheral characteristics not initialized');
+			return this.getCharacteristics().then(() => this.getTargetState()).catch((error) => {
+				this.log.error('[getTargetState] failed to get target state after trying to get characteristics: %s', error);
+				return 0;
+			});
+		}
+
+		if (!this.characteristics.power.target) {
+			this.log.error('[getTargetState] Peripheral characteristics.power.target is invalid');
+			return 0;
+		}
+
+		return Promise.race([
+			await this.characteristics.power.target.readAsync(),
+			new Promise((_, reject) => setTimeout(() => reject(new Error('[getTargetState] timed out')), DEFAULT_TIMEOUT)),
+		]).then((buf) => {
+			if (buf instanceof Buffer) {
+				this.log.debug('[getTargetState] return buf as buffer');
+				return (buf as Buffer)[0];
+			}
+			this.log.error('[getTargetState] return buf as false');
+			return 0;
+		}).catch((error) => {
+			this.log.error('[getTargetState] error: %s', error);
+			return 0;
+		});
+	}
+
+	async setTargetState(state: number): Promise<void> {
+		if (!this.connected) {
+			this.log.info('[setTargetState] Peripheral not connected');
+			return this.connect().then(() => this.setTargetState(state)).catch((error) => {
+				this.log.error('[setTargetState] failed to set position after trying to reconnect: %s', error);
+			});
+		}
+
+		if (!this.initialized) {
+			this.log.error('[setTargetState] Peripheral characteristics not initialized');
+			return this.getCharacteristics().then(() => this.setTargetState(state)).catch((error) => {
+				this.log.error('[setTargetState] failed to set position after trying to get characteristics: %s', error);
+			});
+		}
+
+		if (!this.characteristics.power.target) {
+			this.log.error('[setTargetState] Peripheral characteristics.power.target is invalid');
+			return;
+		}
+
+		Promise.race([
+			await this.characteristics.power.target.writeAsync(Buffer.from([state]), false),
+			new Promise((_, reject) => setTimeout(() => reject(new Error('[setTargetState] timed out')), DEFAULT_TIMEOUT)),
+		]).catch((error) => this.log.error('[setTargetState] error: %s', error));
 	}
 
 	public disconnect(): Promise<void> {
