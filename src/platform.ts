@@ -24,7 +24,9 @@ export class SwitchmateSwitchPlatform implements DynamicPlatformPlugin {
 
 	// this is used to track restored cached accessories
 	public readonly accessories: PlatformAccessory[] = [];
-	private discoveredAllDevices = false;
+
+	// let our callback know we stopped the scan
+	private stopScan = false;
 
 	constructor(
 		public readonly log: Logger,
@@ -70,6 +72,13 @@ export class SwitchmateSwitchPlatform implements DynamicPlatformPlugin {
 
 		const discoveredDevices: Array<string> = [];
 
+		noble.on('scanStop', () => {
+			if (!this.stopScan && discoveredDevices.length !== (this.config as SwitchmateSwitchPlatformConfig).devices.length) {
+				this.log.debug('scan stopped (not by us!) and we have not discovered all devices. restarting...');
+				noble.startScanningAsync();
+			}
+		});
+
 		noble.on('discover', (peripharel) => {
 			const peripharelId = peripharel.id.toLowerCase();
 
@@ -86,17 +95,10 @@ export class SwitchmateSwitchPlatform implements DynamicPlatformPlugin {
 
 					if (discoveredDevices.length === (this.config as SwitchmateSwitchPlatformConfig).devices.length) {
 						this.log.debug('discovered all peripherals, exiting...');
-						this.discoveredAllDevices = true;
+						this.stopScan = true;
 						noble.stopScanningAsync();
 					}
 				}
-			}
-		});
-
-		noble.on('scanStop', () => {
-			if (!this.discoveredAllDevices) {
-				this.log.debug('someone stopped noble scanning but we have not finished discovering, restarting discover...');
-				noble.startScanningAsync();
 			}
 		});
 
