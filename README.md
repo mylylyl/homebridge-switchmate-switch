@@ -44,6 +44,9 @@ or add below to ```config.json``` manually
 }
 ```
 
+## TODO
+- [ ] add refresh rate to config
+
 
 
 

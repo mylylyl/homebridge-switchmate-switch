@@ -11,6 +11,26 @@ import { SwitchmateSwitchPlatform } from './platform';
 
 import { SwitchmateDevice } from './switchmateDevice';
 
+// battery level below 10% is considered low battery
+const LOW_BATTERY_LEVEL = 10;
+
+// refresh every 10 seconds
+// TODO: set through configuration
+const REFRESH_RATE = 10;
+
+// dummy replica of HAP.ChargingState
+enum CHARGING_STATE {
+	NOT_CHARGING = 0,
+	CHARGING = 1,
+	NOT_CHARGEABLE = 2
+}
+
+// dummy replica of HAP.LowBattery
+enum LOW_BATTERY {
+	NORMAL = 0,
+	LOW = 1
+}
+
 export class SwitchAccessory {
 	private service: Service;
 	private batteryService: Service;
@@ -21,8 +41,8 @@ export class SwitchAccessory {
 
 	private batteryState = {
 		level: 100,
-		charging: 2, // not chargable
-		low_battery: 0, // normal
+		charging: CHARGING_STATE.NOT_CHARGEABLE,
+		low_battery: LOW_BATTERY.NORMAL,
 	};
 
 	constructor(
@@ -33,45 +53,48 @@ export class SwitchAccessory {
 		// setup switch service
 		this.service = this.accessory.getService(this.platform.Service.Switch) || this.accessory.addService(this.platform.Service.Switch);
 		this.service.setCharacteristic(this.platform.Characteristic.Name, accessory.context.device.name);
-		this.service.getCharacteristic(this.platform.api.hap.Characteristic.On).updateValue(this.switchState);
+		this.service.getCharacteristic(this.platform.Characteristic.On).updateValue(this.switchState);
 		this.service
-			.getCharacteristic(this.platform.api.hap.Characteristic.On)
+			.getCharacteristic(this.platform.Characteristic.On)
 			.on(CharacteristicEventTypes.GET, this.getState.bind(this))
 			.on(CharacteristicEventTypes.SET, this.setState.bind(this));
 
 		// setup battery service
 		this.batteryService = this.accessory.getService(this.platform.Service.BatteryService) || this.accessory.addService(this.platform.Service.BatteryService);
 		this.batteryService.setCharacteristic(this.platform.Characteristic.Name, accessory.context.device.name + ' Battery');
-		this.batteryService.getCharacteristic(this.platform.api.hap.Characteristic.BatteryLevel).updateValue(this.batteryState.level);
-		this.batteryService.getCharacteristic(this.platform.api.hap.Characteristic.ChargingState).updateValue(this.batteryState.charging);
-		this.batteryService.getCharacteristic(this.platform.api.hap.Characteristic.StatusLowBattery).updateValue(this.batteryState.low_battery);
+		this.batteryService.getCharacteristic(this.platform.Characteristic.BatteryLevel).updateValue(this.batteryState.level);
+		this.batteryService.getCharacteristic(this.platform.Characteristic.ChargingState).updateValue(this.batteryState.charging);
+		this.batteryService.getCharacteristic(this.platform.Characteristic.StatusLowBattery).updateValue(this.batteryState.low_battery);
 		this.batteryService
-			.getCharacteristic(this.platform.api.hap.Characteristic.BatteryLevel)
+			.getCharacteristic(this.platform.Characteristic.BatteryLevel)
 			.on(CharacteristicEventTypes.GET, this.getBatteryLevel.bind(this));
 		this.batteryService
-			.getCharacteristic(this.platform.api.hap.Characteristic.ChargingState)
+			.getCharacteristic(this.platform.Characteristic.ChargingState)
 			.on(CharacteristicEventTypes.GET, this.getChargingState.bind(this));
 		this.batteryService
-			.getCharacteristic(this.platform.api.hap.Characteristic.StatusLowBattery)
+			.getCharacteristic(this.platform.Characteristic.StatusLowBattery)
 			.on(CharacteristicEventTypes.GET, this.getLowBatteryState.bind(this));
 
 		// set accessory information
-		this.switchmateDevice.getInfomationCharacteristics().then((deviceInformation) => {
-			this.platform.log.debug('successfully get device information');
+		this.switchmateDevice.initialize()
+			.then(() => this.switchmateDevice.getInfomationCharacteristics())
+			.then((deviceInformation) => {
+				this.platform.log.debug('successfully get device information');
 
-			this.accessory.getService(this.platform.Service.AccessoryInformation)!
-				.setCharacteristic(this.platform.Characteristic.Manufacturer, deviceInformation.manufacturer)
-				.setCharacteristic(this.platform.Characteristic.Model, deviceInformation.model)
-				.setCharacteristic(this.platform.Characteristic.SerialNumber, accessory.context.device.id) // use mac address as serial number
-				.setCharacteristic(this.platform.Characteristic.HardwareRevision, deviceInformation.hardwareRevision)
-				.setCharacteristic(this.platform.Characteristic.FirmwareRevision, deviceInformation.firmwareRevision);
+				this.accessory.getService(this.platform.Service.AccessoryInformation)!
+					.setCharacteristic(this.platform.Characteristic.Manufacturer, deviceInformation.manufacturer)
+					.setCharacteristic(this.platform.Characteristic.Model, deviceInformation.model)
+					.setCharacteristic(this.platform.Characteristic.SerialNumber, accessory.context.device.id) // use mac address as serial number
+					.setCharacteristic(this.platform.Characteristic.HardwareRevision, deviceInformation.hardwareRevision)
+					.setCharacteristic(this.platform.Characteristic.FirmwareRevision, deviceInformation.firmwareRevision);
 
-			void this.poll();
-		}).catch((error) => this.platform.log.error('Failed to get device information: %s', error));
+				void this.poll();
+			})
+			.catch((error) => this.platform.log.error('Failed to get device information: %s', error));
 	}
 
 	private getState(callback: CharacteristicGetCallback): void {
-		callback(undefined, this.switchState === 1 ? true : false);
+		callback(null, this.switchState === 1 ? true : false);
 	}
 
 	private async setState(value: CharacteristicValue, callback: CharacteristicSetCallback): Promise<void> {
@@ -84,21 +107,22 @@ export class SwitchAccessory {
 		if (targetState !== numberedState) {
 			await this.switchmateDevice.setTargetState(numberedState);
 			this.switchState = numberedState;
+			this.platform.log.debug('switch state set');
 		}
 
 		callback(null);
 	}
 
 	private getBatteryLevel(callback: CharacteristicGetCallback): void {
-		callback(undefined, this.batteryState.level);
+		callback(null, this.batteryState.level);
 	}
 
 	private getChargingState(callback: CharacteristicGetCallback): void {
-		callback(undefined, this.batteryState.charging);
+		callback(null, this.batteryState.charging);
 	}
 
 	private getLowBatteryState(callback: CharacteristicGetCallback): void {
-		callback(undefined, this.batteryState.low_battery);
+		callback(null, this.batteryState.low_battery);
 	}
 
 	private async poll() {
@@ -109,17 +133,17 @@ export class SwitchAccessory {
 			this.batteryState.level = await this.switchmateDevice.getBatteryLevel();
 			this.platform.log.debug('setting battery level to %d', this.batteryState.level);
 			
-			if (this.batteryState.level <= 10) {
-				this.batteryState.low_battery = this.platform.api.hap.Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW;
+			if (this.batteryState.level <= LOW_BATTERY_LEVEL) {
+				this.batteryState.low_battery = LOW_BATTERY.LOW;
 			} else {
-				this.batteryState.low_battery = this.platform.api.hap.Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL;
+				this.batteryState.low_battery = LOW_BATTERY.NORMAL;
 			}
 
 			this.switchState = await this.switchmateDevice.getCurrentState();
 			this.platform.log.debug('setting switch state to %d', this.switchState);
 
 			// Sleep until our next update.
-			await this.sleep(10);
+			await this.sleep(REFRESH_RATE);
 		}
 	}
 
