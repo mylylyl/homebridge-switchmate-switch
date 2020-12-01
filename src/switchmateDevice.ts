@@ -52,52 +52,66 @@ export class SwitchmateDevice {
 		};
 	}
 
-	public connect(): Promise<void> {
-		return new Promise((resolve, reject) => {
-			// Check the connection state
-			const state = this.peripheral.state;
-			if (state === 'connected') {
-				this.connected = true;
-				resolve();
-				return;
-			} else if (state === 'connecting' || state === 'disconnecting') {
-				reject(new Error('current state is ' + state + '. Wait for a few seconds then try again.'));
-				return;
-			}
+	async initialize(): Promise<void> {
+		if (!this.connected) {
+			return this.connect().then(() => this.initialize());
+		}
 
-			// Set event handlers
-			this.peripheral.once('connect', () => {
-				this.log.debug('peripheral connected');
-				this.connected = true;
-			});
+		if (!this.initialized) {
+			return this.getCharacteristics().then(() => this.initialize());
+		}
 
-			this.peripheral.once('disconnect', () => {
-				this.log.debug('peripheral disconnected');
-				this.connected = false;
-				this.initialized = false;
-				this.peripheral.removeAllListeners();
-			});
+		this.log.debug('finished initialize');
+	}
 
-			this.peripheral.connectAsync().then(() => {
-				this.connected = true;
-				this.log.debug('successfully connect to device');
-				return this.getCharacteristics();
-			}).then(() => {
-				if (this.initialized) {
-					this.log.debug('device characteristics is initialized');
-					resolve();
-				} else {
-					reject(new Error('failed to initialize characteristics'));
-				}
-			}).catch((error) => {
-				reject(error);
-			});
+	private async connect(): Promise<void> {
+		// Check the connection state
+		const state = this.peripheral.state;
+		if (state === 'connected') {
+			this.log.debug('peripheral already connected');
+			this.connected = true;
+			return;
+		} else if (state === 'connecting' || state === 'disconnecting') {
+			this.log.debug('peripheral is connecting or disconnecting. wait a few seconds...');
+			return new Promise(() => setTimeout(() => this.connect(), DEFAULT_TIMEOUT));
+		}
+
+		// Set event handlers
+		this.peripheral.once('connect', () => {
+			this.log.debug('peripheral connected');
+			this.connected = true;
+		});
+
+		this.peripheral.once('disconnect', () => {
+			this.log.debug('peripheral disconnected');
+			this.initialized = false;
+			this.characteristics = {
+				battery: null,
+				power: {
+					current: null,
+					target: null,
+				},
+			};
+			this.connected = false;
+			this.peripheral.removeAllListeners();
+		});
+
+		return Promise.race([
+			await this.peripheral.connectAsync(),
+			new Promise((_, reject) => setTimeout(() => reject(new Error('[connect] timed out')), DEFAULT_TIMEOUT)),
+		]).then(() => {
+			this.connected = true;
+			this.log.debug('[connect] connected');
+			return;
+		}).catch((error) => {
+			this.log.error('[connect] error: %s', error);
+			return;
 		});
 	}
 
 	async getInfomationCharacteristics(): Promise<SwitchmateDeviceInformation> {
 		if (!this.connected) {
-			return this.connect().then(() => this.getInfomationCharacteristics());
+			return this.initialize().then(() => this.getInfomationCharacteristics());
 		}
 
 		this.log.debug('getting information characteristics');
@@ -144,6 +158,10 @@ export class SwitchmateDevice {
 	}
 
 	private async getCharacteristics(): Promise<void> {
+		if (!this.connected) {
+			return this.connect().then(() => this.getCharacteristics());
+		}
+
 		if (this.initialized) {
 			this.log.debug('characteristics is inisitalized already');
 			return;
@@ -189,18 +207,12 @@ export class SwitchmateDevice {
 	async getBatteryLevel(): Promise<number> {
 		if (!this.connected) {
 			this.log.info('[getBatteryLevel] Peripheral not connected');
-			return this.connect().then(() => this.getBatteryLevel()).catch((error) => {
-				this.log.error('[getBatteryLevel] failed to get after trying to reconnect: %s', error);
-				return 0;
-			});
+			return this.initialize().then(() => this.getBatteryLevel());
 		}
 
 		if (!this.initialized) {
 			this.log.error('[getBatteryLevel] Peripheral characteristics not initialized');
-			return this.getCharacteristics().then(() => this.getBatteryLevel()).catch((error) => {
-				this.log.error('[getBatteryLevel] failed to get after trying to get characteristics: %s', error);
-				return 0;
-			});
+			return this.getCharacteristics().then(() => this.getBatteryLevel());
 		}
 
 		if (!this.characteristics.battery) {
@@ -227,18 +239,12 @@ export class SwitchmateDevice {
 	async getCurrentState(): Promise<number> {
 		if (!this.connected) {
 			this.log.info('[getCurrentState] Peripheral not connected');
-			return this.connect().then(() => this.getCurrentState()).catch((error) => {
-				this.log.error('[getCurrentState] failed to get current state after trying to reconnect: %s', error);
-				return 0;
-			});
+			return this.initialize().then(() => this.getCurrentState());
 		}
 
 		if (!this.initialized) {
 			this.log.error('[getCurrentState] Peripheral characteristics not initialized');
-			return this.getCharacteristics().then(() => this.getCurrentState()).catch((error) => {
-				this.log.error('[getCurrentState] failed to get current state after trying to get characteristics: %s', error);
-				return 0;
-			});
+			return this.getCharacteristics().then(() => this.getCurrentState());
 		}
 
 		if (!this.characteristics.power.current) {
@@ -265,18 +271,12 @@ export class SwitchmateDevice {
 	async getTargetState(): Promise<number> {
 		if (!this.connected) {
 			this.log.info('[getTargetState] Peripheral not connected');
-			return this.connect().then(() => this.getTargetState()).catch((error) => {
-				this.log.error('[getTargetState] failed to get target state after trying to reconnect: %s', error);
-				return 0;
-			});
+			return this.initialize().then(() => this.getTargetState());
 		}
 
 		if (!this.initialized) {
 			this.log.error('[getTargetState] Peripheral characteristics not initialized');
-			return this.getCharacteristics().then(() => this.getTargetState()).catch((error) => {
-				this.log.error('[getTargetState] failed to get target state after trying to get characteristics: %s', error);
-				return 0;
-			});
+			return this.getCharacteristics().then(() => this.getTargetState());
 		}
 
 		if (!this.characteristics.power.target) {
@@ -303,16 +303,12 @@ export class SwitchmateDevice {
 	async setTargetState(state: number): Promise<void> {
 		if (!this.connected) {
 			this.log.info('[setTargetState] Peripheral not connected');
-			return this.connect().then(() => this.setTargetState(state)).catch((error) => {
-				this.log.error('[setTargetState] failed to set position after trying to reconnect: %s', error);
-			});
+			return this.initialize().then(() => this.setTargetState(state));
 		}
 
 		if (!this.initialized) {
 			this.log.error('[setTargetState] Peripheral characteristics not initialized');
-			return this.getCharacteristics().then(() => this.setTargetState(state)).catch((error) => {
-				this.log.error('[setTargetState] failed to set position after trying to get characteristics: %s', error);
-			});
+			return this.getCharacteristics().then(() => this.setTargetState(state));
 		}
 
 		if (!this.characteristics.power.target) {
@@ -324,22 +320,5 @@ export class SwitchmateDevice {
 			await this.characteristics.power.target.writeAsync(Buffer.from([state]), false),
 			new Promise((_, reject) => setTimeout(() => reject(new Error('[setTargetState] timed out')), DEFAULT_TIMEOUT)),
 		]).catch((error) => this.log.error('[setTargetState] error: %s', error));
-	}
-
-	public disconnect(): Promise<void> {
-		return new Promise((resolve, reject) => {
-			this.connected = false;
-
-			const state = this.peripheral.state;
-			if (state === 'disconnected') {
-				resolve();
-				return;
-			} else if (state === 'connecting' || state === 'disconnecting') {
-				reject(new Error('Now ' + state + '. Wait for a few seconds then try again.'));
-				return;
-			}
-
-			return this.peripheral.disconnectAsync();
-		});
 	}
 }
