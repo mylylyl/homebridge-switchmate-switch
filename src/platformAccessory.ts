@@ -128,7 +128,9 @@ export class SwitchAccessory {
 	private async poll() {
 		// Loop forever.
 		for (;;) {
-			this.platform.log.debug('refreshing...');
+			this.platform.log.debug('polling...');
+
+			await this.switchmateDevice.initialize();
 
 			this.batteryState.level = await this.switchmateDevice.getBatteryLevel();
 			this.platform.log.debug('setting battery level to %d', this.batteryState.level);
@@ -141,6 +143,9 @@ export class SwitchAccessory {
 
 			this.switchState = await this.switchmateDevice.getCurrentState();
 			this.platform.log.debug('setting switch state to %d', this.switchState);
+
+			await this.switchmateDevice.disconnect();
+			this.platform.log.debug('done polling');
 
 			// Sleep until our next update.
 			await this.sleep(REFRESH_RATE);

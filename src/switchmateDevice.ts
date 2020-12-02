@@ -109,6 +109,31 @@ export class SwitchmateDevice {
 		});
 	}
 
+	async disconnect(): Promise<void> {
+		// Check the connection state
+		const state = this.peripheral.state;
+		if (state === 'disconnected') {
+			this.connected = false;
+			this.log.debug('peripheral already disconnected');
+			return;
+		} else if (state === 'connecting' || state === 'disconnecting') {
+			this.log.debug('peripheral is connecting or disconnecting. wait a few seconds...');
+			return new Promise(() => setTimeout(() => this.disconnect(), DEFAULT_TIMEOUT));
+		}
+
+		return Promise.race([
+			await this.peripheral.disconnectAsync(),
+			new Promise((_, reject) => setTimeout(() => reject(new Error('[disconnect] timed out')), DEFAULT_TIMEOUT)),
+		]).then(() => {
+			this.connected = false;
+			this.log.debug('[disconnect] disconnected');
+			return;
+		}).catch((error) => {
+			this.log.error('[disconnect] error: %s', error);
+			return;
+		});
+	}
+
 	async getInfomationCharacteristics(): Promise<SwitchmateDeviceInformation> {
 		if (!this.connected) {
 			return this.initialize().then(() => this.getInfomationCharacteristics());
