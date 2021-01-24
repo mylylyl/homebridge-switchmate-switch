@@ -52,38 +52,34 @@ export class SwitchmateDevice {
 		};
 	}
 
-	async initialize(): Promise<void> {
+	initialize(): Promise<boolean> {
 		if (!this.connected) {
+			this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} is not connected`);
 			return this.connect().then(() => this.initialize());
 		}
 
 		if (!this.initialized) {
+			this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} is not initialized`);
 			return this.getCharacteristics().then(() => this.initialize());
 		}
 
-		this.log.debug('finished initialize');
+		this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} finished initialize`);
+		return new Promise((resolve) => resolve(true));
 	}
 
-	private async connect(): Promise<void> {
+	private connect(): Promise<void> {
 		// Check the connection state
 		const state = this.peripheral.state;
 		if (state === 'connected') {
-			this.log.debug('peripheral already connected');
+			this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} is already connected`);
 			this.connected = true;
-			return;
-		} else if (state === 'connecting' || state === 'disconnecting') {
-			this.log.debug('peripheral is connecting or disconnecting. wait a few seconds...');
-			return new Promise(() => setTimeout(() => this.connect(), DEFAULT_TIMEOUT));
+			return new Promise((resolve) => resolve());
 		}
 
-		// Set event handlers
-		this.peripheral.once('connect', () => {
-			this.log.debug('peripheral connected');
-			this.connected = true;
-		});
-
 		this.peripheral.once('disconnect', () => {
-			this.log.debug('peripheral disconnected');
+			this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} disconnected`);
+			this.peripheral.removeAllListeners();
+			this.connected = false;
 			this.initialized = false;
 			this.characteristics = {
 				battery: null,
@@ -92,54 +88,26 @@ export class SwitchmateDevice {
 					target: null,
 				},
 			};
-			this.connected = false;
-			this.peripheral.removeAllListeners();
 		});
 
 		return Promise.race([
-			await this.peripheral.connectAsync(),
-			new Promise((_, reject) => setTimeout(() => reject(new Error('[connect] timed out')), DEFAULT_TIMEOUT)),
+			this.peripheral.connectAsync(),
+			new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), DEFAULT_TIMEOUT)),
 		]).then(() => {
+			this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} is connected`);
 			this.connected = true;
-			this.log.debug('[connect] connected');
-			return;
+			return new Promise<void>(resolve => resolve());
 		}).catch((error) => {
-			this.log.error('[connect] error: %s', error);
-			return;
-		});
-	}
-
-	async disconnect(): Promise<void> {
-		// Check the connection state
-		const state = this.peripheral.state;
-		if (state === 'disconnected') {
-			this.connected = false;
-			this.log.debug('peripheral already disconnected');
-			return;
-		} else if (state === 'connecting' || state === 'disconnecting') {
-			this.log.debug('peripheral is connecting or disconnecting. wait a few seconds...');
-			return new Promise(() => setTimeout(() => this.disconnect(), DEFAULT_TIMEOUT));
-		}
-
-		return Promise.race([
-			await this.peripheral.disconnectAsync(),
-			new Promise((_, reject) => setTimeout(() => reject(new Error('[disconnect] timed out')), DEFAULT_TIMEOUT)),
-		]).then(() => {
-			this.connected = false;
-			this.log.debug('[disconnect] disconnected');
-			return;
-		}).catch((error) => {
-			this.log.error('[disconnect] error: %s', error);
-			return;
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} failed to connect ${error}`);
+			return new Promise((_, reject) => reject(new Error(error)));
 		});
 	}
 
 	async getInfomationCharacteristics(): Promise<SwitchmateDeviceInformation> {
 		if (!this.connected) {
+			this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} is not connected to get info characteristics`);
 			return this.initialize().then(() => this.getInfomationCharacteristics());
 		}
-
-		this.log.debug('getting information characteristics');
 
 		const deviceInfo: SwitchmateDeviceInformation = {
 			manufacturer: 'Default Manufacturer',
@@ -148,34 +116,110 @@ export class SwitchmateDevice {
 			firmwareRevision: 'Default Firmware Revision',
 		};
 
-		const services = await this.peripheral.discoverServicesAsync([INFO_SERVICE_UUID]);
-		if (!services || services.length !== 1 || services[0].uuid !== INFO_SERVICE_UUID) {
-			this.log.error('Invalid service discovered');
+		this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} is getting information services`);
+
+		const services: noble.Service[] = await Promise.race([
+			this.peripheral.discoverServicesAsync([INFO_SERVICE_UUID]),
+			new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), DEFAULT_TIMEOUT)),
+		]).then((ret) => {
+			if (ret && Array.isArray(ret)) {
+				this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} is discovering info services as array`);
+				return (ret as noble.Service[]);
+			}
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} failed to discover info services as array`);
+			return [];
+		}).catch((error) => {
+			this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} failed to discover info services: ${error}`);
+			return [];
+		});
+
+		if (services.length !== 1 || services[0].uuid !== INFO_SERVICE_UUID) {
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} has invalid info services`);
 			return deviceInfo;
 		}
 
-		const characteristics = await services[0].discoverCharacteristicsAsync();
-		if (!characteristics || characteristics.length <= 0) {
-			this.log.error('Invalid characteristics discovered');
+		this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} is getting information characteristics`);
+
+		const characteristics: noble.Characteristic[] = await Promise.race([
+			services[0].discoverCharacteristicsAsync(),
+			new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), DEFAULT_TIMEOUT)),
+		]).then((ret) => {
+			if (ret && Array.isArray(ret)) {
+				this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} is discovering info characteristics as array`);
+				return (ret as noble.Characteristic[]);
+			}
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} failed to discover info characteristics as array`);
+			return [];
+		}).catch((error) => {
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} failed to discover info characteristics: ${error}`);
+			return [];
+		});
+
+		if (characteristics.length !== 5) {
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} has invalid info characteristics`);
 			return deviceInfo;
 		}
 
 		for (const characteristic of characteristics) {
-			switch (characteristic.uuid) {
-				case INFO_MANUFACTURER_CHARACTERISTIC_UUID:
-					deviceInfo.manufacturer = (await characteristic.readAsync()).toString();
-					break;
-				case INFO_MODEL_CHARACTERISTIC_UUID:
-					deviceInfo.model = (await characteristic.readAsync()).toString();
-					break;
-				case INFO_HARDWARE_REVISION_CHARACTERISTIC_UUID:
-					deviceInfo.hardwareRevision = (await characteristic.readAsync()).toString();
-					break;
-				case INFO_FIRMWARE_REVISION_CHARACTERISTIC_UUID:
-					deviceInfo.firmwareRevision = (await characteristic.readAsync()).toString();
-					break;
-				default:
-					break;
+			if (characteristic.uuid === INFO_MANUFACTURER_CHARACTERISTIC_UUID) {
+				deviceInfo.manufacturer = await characteristic.readAsync()
+					.then((buffer) => {
+						if (buffer instanceof Buffer) {
+							this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} is reading INFO_MANUFACTURER_CHARACTERISTIC_UUID as buffer`);
+							return buffer.toString();
+						}
+						this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} failed to read INFO_MANUFACTURER_CHARACTERISTIC_UUID as buffer`);
+						return deviceInfo.manufacturer;
+					}).catch((error) => {
+						this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} failed to read INFO_MANUFACTURER_CHARACTERISTIC_UUID: ${error}`);
+						return deviceInfo.manufacturer;
+					});
+				continue;
+			}
+			if (characteristic.uuid === INFO_MODEL_CHARACTERISTIC_UUID) {
+				deviceInfo.model = await characteristic.readAsync()
+					.then((buffer) => {
+						if (buffer instanceof Buffer) {
+							this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} is reading INFO_MODEL_CHARACTERISTIC_UUID as buffer`);
+							return buffer.toString();
+						}
+						this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} failed to read INFO_MODEL_CHARACTERISTIC_UUID as buffer`);
+						return deviceInfo.manufacturer;
+					}).catch((error) => {
+						this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} failed to read INFO_MODEL_CHARACTERISTIC_UUID: ${error}`);
+						return deviceInfo.manufacturer;
+					});
+				continue;
+			}
+			if (characteristic.uuid === INFO_HARDWARE_REVISION_CHARACTERISTIC_UUID) {
+				deviceInfo.hardwareRevision = await characteristic.readAsync()
+					.then((buffer) => {
+						if (buffer instanceof Buffer) {
+							this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} is reading INFO_HARDWARE_REVISION_CHARACTERISTIC_UUID as buffer`);
+							return buffer.toString();
+						}
+						this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} failed to read INFO_HARDWARE_REVISION_CHARACTERISTIC_UUID as buffer`);
+						return deviceInfo.manufacturer;
+					}).catch((error) => {
+						this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} failed to read INFO_HARDWARE_REVISION_CHARACTERISTIC_UUID: ${error}`);
+						return deviceInfo.manufacturer;
+					});
+				continue;
+			}
+			if (characteristic.uuid === INFO_FIRMWARE_REVISION_CHARACTERISTIC_UUID) {
+				deviceInfo.firmwareRevision = await characteristic.readAsync()
+					.then((buffer) => {
+						if (buffer instanceof Buffer) {
+							this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} is reading INFO_FIRMWARE_REVISION_CHARACTERISTIC_UUID as buffer`);
+							return buffer.toString();
+						}
+						this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} failed to read INFO_FIRMWARE_REVISION_CHARACTERISTIC_UUID as buffer`);
+						return deviceInfo.manufacturer;
+					}).catch((error) => {
+						this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} failed to read INFO_FIRMWARE_REVISION_CHARACTERISTIC_UUID: ${error}`);
+						return deviceInfo.manufacturer;
+					});
+				continue;
 			}
 		}
 
@@ -184,32 +228,81 @@ export class SwitchmateDevice {
 
 	private async getCharacteristics(): Promise<void> {
 		if (!this.connected) {
+			this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} is not connected to get characteristics`);
 			return this.connect().then(() => this.getCharacteristics());
 		}
 
 		if (this.initialized) {
-			this.log.debug('characteristics is inisitalized already');
-			return;
+			this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} is initialized already`);
+			return new Promise(resolve => resolve());
 		}
 
-		const services = await this.peripheral.discoverServicesAsync([BATTERY_SERVICE_UUID, POWER_SERVICE_UUID]);
-		if (!services || services.length !== 2 || services[0].uuid !== BATTERY_SERVICE_UUID || services[1].uuid !== POWER_SERVICE_UUID) {
-			this.log.error('Invalid services: %s', services.toString());
-			return;
+		this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} is getting services`);
+
+		const services: noble.Service[] = await Promise.race([
+			this.peripheral.discoverServicesAsync([BATTERY_SERVICE_UUID, POWER_SERVICE_UUID]),
+			new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), DEFAULT_TIMEOUT)),
+		]).then((ret) => {
+			if (ret && Array.isArray(ret)) {
+				this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} is discovering services as array`);
+				return (ret as noble.Service[]);
+			}
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} failed to discover services as array`);
+			return [];
+		}).catch((error) => {
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} failed to discover services: ${error}`);
+			return [];
+		});
+
+		if (services.length !== 2 || services[0].uuid !== BATTERY_SERVICE_UUID || services[1].uuid !== POWER_SERVICE_UUID) {
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} has invalid services`);
+			return new Promise((_, reject) => reject(new Error('invalid services')));
 		}
 
-		const batteryCharacteristics = await services[0].discoverCharacteristicsAsync([BATTERY_LEVEL_CHARACTERISTIC_UUID]);
-		if (!batteryCharacteristics || batteryCharacteristics.length !== 1 || batteryCharacteristics[0].uuid !== BATTERY_LEVEL_CHARACTERISTIC_UUID) {
-			this.log.error('Invalid battery characteristics');
-			return;
+		this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} is getting battery characteristics`);
+
+		const batteryCharacteristics: noble.Characteristic[] = await Promise.race([
+			services[0].discoverCharacteristicsAsync([BATTERY_LEVEL_CHARACTERISTIC_UUID]),
+			new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), DEFAULT_TIMEOUT)),
+		]).then((ret) => {
+			if (ret && Array.isArray(ret)) {
+				this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} is discovering battery characteristics as array`);
+				return (ret as noble.Characteristic[]);
+			}
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} failed to discover battery characteristics as array`);
+			return [];
+		}).catch((error) => {
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} failed to discover battery characteristics: ${error}`);
+			return [];
+		});
+
+		if (batteryCharacteristics.length !== 1 || batteryCharacteristics[0].uuid !== BATTERY_LEVEL_CHARACTERISTIC_UUID) {
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} has invalid battery characteristics`);
+			return new Promise((_, reject) => reject(new Error('invalid battery characteristics')));
 		}
 
 		this.characteristics.battery = batteryCharacteristics[0];
 
-		const powerCharacteristics = await services[1].discoverCharacteristicsAsync([POWER_CURRENT_CHARACTERISTIC_UUID, POWER_TARGET_CHARACTERISTIC_UUID]);
-		if (!powerCharacteristics || powerCharacteristics.length !== 2) {
-			this.log.error('Invalid power characteristics');
-			return;
+		this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} is getting power characteristics`);
+
+		const powerCharacteristics: noble.Characteristic[] = await Promise.race([
+			services[1].discoverCharacteristicsAsync([POWER_CURRENT_CHARACTERISTIC_UUID, POWER_TARGET_CHARACTERISTIC_UUID]),
+			new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), DEFAULT_TIMEOUT)),
+		]).then((ret) => {
+			if (ret && Array.isArray(ret)) {
+				this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} is discovering power characteristics as array`);
+				return (ret as noble.Characteristic[]);
+			}
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} failed to discover power characteristics as array`);
+			return [];
+		}).catch((error) => {
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} failed to discover power characteristics: ${error}`);
+			return [];
+		});
+
+		if (powerCharacteristics.length !== 2) {
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} has invalid power characteristics`);
+			return new Promise((_, reject) => reject(new Error('invalid power characteristics')));
 		}
 
 		for (const characteristic of powerCharacteristics) {
@@ -225,125 +318,132 @@ export class SwitchmateDevice {
 			}
 		}
 
-		this.log.debug('successfully get characteristics');
+		this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} has successfully get all characteristics`);
 		this.initialized = true;
+
+		return new Promise(resolve => resolve());
 	}
 
-	async getBatteryLevel(): Promise<number> {
+	getBatteryLevel(): Promise<number> {
 		if (!this.connected) {
-			this.log.info('[getBatteryLevel] Peripheral not connected');
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} is not connected for getBatteryLevel`);
 			return this.initialize().then(() => this.getBatteryLevel());
 		}
 
 		if (!this.initialized) {
-			this.log.error('[getBatteryLevel] Peripheral characteristics not initialized');
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} is not initialized for getBatteryLevel`);
 			return this.getCharacteristics().then(() => this.getBatteryLevel());
 		}
 
 		if (!this.characteristics.battery) {
-			this.log.error('[getBatteryLevel] Peripheral characteristic is invalid');
-			return 0;
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} has invalid battery characteristic`);
+			return new Promise((_, reject) => reject(new Error('invalid battery characteristic')));
 		}
 
 		return Promise.race([
-			await this.characteristics.battery.readAsync(),
-			new Promise((_, reject) => setTimeout(() => reject(new Error('[getBatteryLevel] timed out')), DEFAULT_TIMEOUT)),
-		]).then((buf) => {
-			if (buf instanceof Buffer) {
-				this.log.debug('[getBatteryLevel] return buf as buffer');
-				return (buf as Buffer)[0];
+			this.characteristics.battery.readAsync(),
+			new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), DEFAULT_TIMEOUT)),
+		]).then((buffer) => {
+			if (buffer instanceof Buffer) {
+				this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} is reading battery as buffer`);
+				return buffer[0];
 			}
-			this.log.error('[getBatteryLevel] return buf as false');
-			return 0;
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} failed to read battery as buffer`);
+			return new Promise<number>((_, reject) => reject(new Error('failed to read as buffer')));
 		}).catch((error) => {
-			this.log.error('[getBatteryLevel] error: %s', error);
-			return 0;
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} failed to read battery: ${error}`);
+			return new Promise((_, reject) => reject(new Error(error)));
 		});
 	}
 
-	async getCurrentState(): Promise<number> {
+	getCurrentState(): Promise<number> {
 		if (!this.connected) {
-			this.log.info('[getCurrentState] Peripheral not connected');
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} is not connected for getCurrentState`);
 			return this.initialize().then(() => this.getCurrentState());
 		}
 
 		if (!this.initialized) {
-			this.log.error('[getCurrentState] Peripheral characteristics not initialized');
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} is not initialized for getCurrentState`);
 			return this.getCharacteristics().then(() => this.getCurrentState());
 		}
 
 		if (!this.characteristics.power.current) {
-			this.log.error('[getCurrentState] Peripheral characteristics.power.current is invalid');
-			return 0;
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} has invalid current state characteristic`);
+			return new Promise((_, reject) => reject(new Error('invalid current state characteristic')));
 		}
 
 		return Promise.race([
-			await this.characteristics.power.current.readAsync(),
-			new Promise((_, reject) => setTimeout(() => reject(new Error('[getCurrentState] timed out')), DEFAULT_TIMEOUT)),
-		]).then((buf) => {
-			if (buf instanceof Buffer) {
-				this.log.debug('[getCurrentState] return buf as buffer');
-				return (buf as Buffer)[0];
+			this.characteristics.power.current.readAsync(),
+			new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), DEFAULT_TIMEOUT)),
+		]).then((buffer) => {
+			if (buffer instanceof Buffer) {
+				this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} is reading current state as buffer`);
+				return buffer[0];
 			}
-			this.log.error('[getCurrentState] return buf as false');
-			return 0;
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} failed to read current state as buffer`);
+			return new Promise<number>((_, reject) => reject(new Error('failed to read as buffer')));
 		}).catch((error) => {
-			this.log.error('[getCurrentState] error: %s', error);
-			return 0;
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} failed to read current state: ${error}`);
+			return new Promise((_, reject) => reject(new Error(error)));
 		});
 	}
 
-	async getTargetState(): Promise<number> {
+	getTargetState(): Promise<number> {
 		if (!this.connected) {
-			this.log.info('[getTargetState] Peripheral not connected');
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} is not connected for getTargetState`);
 			return this.initialize().then(() => this.getTargetState());
 		}
 
 		if (!this.initialized) {
-			this.log.error('[getTargetState] Peripheral characteristics not initialized');
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} is not initialized for getTargetState`);
 			return this.getCharacteristics().then(() => this.getTargetState());
 		}
 
 		if (!this.characteristics.power.target) {
-			this.log.error('[getTargetState] Peripheral characteristics.power.target is invalid');
-			return 0;
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} has invalid target state characteristic`);
+			return new Promise((_, reject) => reject(new Error('invalid target state characteristic')));
 		}
 
 		return Promise.race([
-			await this.characteristics.power.target.readAsync(),
-			new Promise((_, reject) => setTimeout(() => reject(new Error('[getTargetState] timed out')), DEFAULT_TIMEOUT)),
-		]).then((buf) => {
-			if (buf instanceof Buffer) {
-				this.log.debug('[getTargetState] return buf as buffer');
-				return (buf as Buffer)[0];
+			this.characteristics.power.target.readAsync(),
+			new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), DEFAULT_TIMEOUT)),
+		]).then((buffer) => {
+			if (buffer instanceof Buffer) {
+				this.log.debug(`peripheral ${this.peripheral.id.toLowerCase()} is reading target state as buffer`);
+				return buffer[0];
 			}
-			this.log.error('[getTargetState] return buf as false');
-			return 0;
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} failed to read target state as buffer`);
+			return new Promise<number>((_, reject) => reject(new Error('failed to read as buffer')));
 		}).catch((error) => {
-			this.log.error('[getTargetState] error: %s', error);
-			return 0;
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} failed to read target state: ${error}`);
+			return new Promise((_, reject) => reject(new Error(error)));
 		});
 	}
 
-	async setTargetState(state: number): Promise<void> {
+	setTargetState(state: number): Promise<void> {
 		if (!this.connected) {
-			this.log.info('[setTargetState] Peripheral not connected');
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} is not connected for setTargetState`);
 			return this.initialize().then(() => this.setTargetState(state));
 		}
 
 		if (!this.initialized) {
-			this.log.error('[setTargetState] Peripheral characteristics not initialized');
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} is not initialized for setTargetState`);
 			return this.getCharacteristics().then(() => this.setTargetState(state));
 		}
 
 		if (!this.characteristics.power.target) {
-			this.log.error('[setTargetState] Peripheral characteristics.power.target is invalid');
-			return;
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} has invalid target state characteristic`);
+			return new Promise((_, reject) => reject(new Error('invalid target state characteristic')));
 		}
 
-		Promise.race([
-			await this.characteristics.power.target.writeAsync(Buffer.from([state]), false),
-			new Promise((_, reject) => setTimeout(() => reject(new Error('[setTargetState] timed out')), DEFAULT_TIMEOUT)),
-		]).catch((error) => this.log.error('[setTargetState] error: %s', error));
+		return Promise.race([
+			this.characteristics.power.target.writeAsync(Buffer.from([state]), false),
+			new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), DEFAULT_TIMEOUT)),
+		]).then(() => {
+			return new Promise<void>(resolve => resolve());
+		}).catch((error) => {
+			this.log.error(`peripheral ${this.peripheral.id.toLowerCase()} failed to set target state: ${error}`);
+			return new Promise((_, reject) => reject(new Error(error)));
+		});
 	}
 }

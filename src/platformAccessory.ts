@@ -76,10 +76,9 @@ export class SwitchAccessory {
 			.on(CharacteristicEventTypes.GET, this.getLowBatteryState.bind(this));
 
 		// set accessory information
-		this.switchmateDevice.initialize()
-			.then(() => this.switchmateDevice.getInfomationCharacteristics())
+		this.switchmateDevice.getInfomationCharacteristics()
 			.then((deviceInformation) => {
-				this.platform.log.debug('successfully get device information');
+				this.platform.log.debug(`accessory ${this.accessory.displayName} successfully gets device information`);
 
 				this.accessory.getService(this.platform.Service.AccessoryInformation)!
 					.setCharacteristic(this.platform.Characteristic.Manufacturer, deviceInformation.manufacturer)
@@ -90,27 +89,34 @@ export class SwitchAccessory {
 
 				void this.poll();
 			})
-			.catch((error) => this.platform.log.error('Failed to get device information: %s', error));
+			.catch((error) => this.platform.log.error(`accessory ${this.accessory.displayName} failed to get device information: ${error}`));
 	}
 
 	private getState(callback: CharacteristicGetCallback): void {
 		callback(null, this.switchState === 1 ? true : false);
 	}
 
-	private async setState(value: CharacteristicValue, callback: CharacteristicSetCallback): Promise<void> {
-		this.platform.log.debug('setting switch state to %s', value as boolean);
+	private setState(value: CharacteristicValue, callback: CharacteristicSetCallback): void {
+		this.platform.log.info(`setting ${this.accessory.displayName} state to ${(value as boolean) ? 'on' : 'off'}`);
 
 		const numberedState = (value as boolean) ? 1 : 0;
 
-		const targetState = await this.switchmateDevice.getTargetState();
-		// only change when we need to
-		if (targetState !== numberedState) {
-			await this.switchmateDevice.setTargetState(numberedState);
-			this.switchState = numberedState;
-			this.platform.log.debug('switch state set');
-		}
-
-		callback(null);
+		this.switchmateDevice.getTargetState()
+			.then((targetState) => {
+				// only change when we need to
+				if (targetState !== numberedState) {
+					return this.switchmateDevice.setTargetState(numberedState);
+				}
+			})
+			.then(() => {
+				this.platform.log.debug(`${this.accessory.displayName} successfully set state to ${numberedState ? 'on' : 'off'}`);
+				this.switchState = numberedState;
+				callback(null);
+			})
+			.catch((error) => {
+				this.platform.log.error(`${this.accessory.displayName} failed to set state: ${error}`);
+				callback(new Error(error));
+			});
 	}
 
 	private getBatteryLevel(callback: CharacteristicGetCallback): void {
@@ -127,25 +133,41 @@ export class SwitchAccessory {
 
 	private async poll() {
 		// Loop forever.
-		for (;;) {
-			this.platform.log.debug('polling...');
+		for (; ;) {
+			this.platform.log.debug(`${this.accessory.displayName} started polling`);
 
-			await this.switchmateDevice.initialize();
+			const initialized = await this.switchmateDevice.initialize().catch((error) => {
+				this.platform.log.error(`${this.accessory.displayName} failed to initialize: ${error}`);
+				return false;
+			});
+			if (!initialized) {
+				await this.sleep(REFRESH_RATE);
+				continue;
+			}
 
-			this.batteryState.level = await this.switchmateDevice.getBatteryLevel();
-			this.platform.log.debug('setting battery level to %d', this.batteryState.level);
-			
+			this.batteryState.level = await this.switchmateDevice.getBatteryLevel().catch((error) => {
+				this.platform.log.error(`${this.accessory.displayName} failed to get battery level: ${error}`);
+				return 0;
+			});
+			this.platform.log.debug(`setting ${this.accessory.displayName} battery level to ${this.batteryState.level}`);
+			this.batteryService.getCharacteristic(this.platform.Characteristic.BatteryLevel).updateValue(this.batteryState.level);
+		
+
 			if (this.batteryState.level <= LOW_BATTERY_LEVEL) {
 				this.batteryState.low_battery = LOW_BATTERY.LOW;
 			} else {
 				this.batteryState.low_battery = LOW_BATTERY.NORMAL;
 			}
+			this.batteryService.getCharacteristic(this.platform.Characteristic.StatusLowBattery).updateValue(this.batteryState.low_battery);
 
-			this.switchState = await this.switchmateDevice.getCurrentState();
-			this.platform.log.debug('setting switch state to %d', this.switchState);
+			this.switchState = await this.switchmateDevice.getCurrentState().catch((error) => {
+				this.platform.log.error(`${this.accessory.displayName} failed to get switch state: ${error}`);
+				return 0;
+			});
+			this.platform.log.debug(`updating ${this.accessory.displayName} switch state to ${this.switchState === 1 ? 'on' : 'off'}`);
+			this.service.getCharacteristic(this.platform.Characteristic.On).updateValue(this.switchState);
 
-			await this.switchmateDevice.disconnect();
-			this.platform.log.debug('done polling');
+			this.platform.log.debug(`${this.accessory.displayName} done polling`);
 
 			// Sleep until our next update.
 			await this.sleep(REFRESH_RATE);

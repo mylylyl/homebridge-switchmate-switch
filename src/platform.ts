@@ -6,11 +6,16 @@ import { SwitchAccessory } from './platformAccessory';
 import noble from '@abandonware/noble';
 import { SwitchmateDevice } from './switchmateDevice';
 
+const POWER_SERVICE_UUID = 'a22bd383ebdd49acb2e740eb55f5d0ab';
+
+export interface SwitchmateSwitchConfig {
+	name: string;
+	id: string;
+}
+
 export interface SwitchmateSwitchPlatformConfig extends PlatformConfig {
-	devices: [{
-		name: string;
-		id: string;
-	}];
+	discoverDelay: number;
+	devices: Array<SwitchmateSwitchConfig>;
 }
 
 /**
@@ -26,7 +31,7 @@ export class SwitchmateSwitchPlatform implements DynamicPlatformPlugin {
 	public readonly accessories: PlatformAccessory[] = [];
 
 	// let our callback know we stopped the scan
-	private stopScan = false;
+	private discoveredAll = false;
 
 	constructor(
 		public readonly log: Logger,
@@ -40,9 +45,10 @@ export class SwitchmateSwitchPlatform implements DynamicPlatformPlugin {
 		// in order to ensure they weren't added to homebridge already. This event can also be used
 		// to start discovery of new accessories.
 		this.api.on(APIEvent.DID_FINISH_LAUNCHING, () => {
-			log.debug('Executed didFinishLaunching callback');
-			// run the method to discover / register your devices as accessories
-			this.discoverDevices();
+			this.log.debug('on DID_FINISH_LAUNCHING. Looking for new accessories');
+			const discoveryDelay = (config as SwitchmateSwitchPlatformConfig).discoverDelay;
+			this.log.debug(`delay discovery for ${discoveryDelay} seconds`);
+			setTimeout(() => this.discoverDevices(), discoveryDelay * 1000);
 		});
 	}
 
@@ -57,56 +63,108 @@ export class SwitchmateSwitchPlatform implements DynamicPlatformPlugin {
 		this.accessories.push(accessory);
 	}
 
-	discoverDevices() {
-		// remove unconfigured accessories first
-		if (!this.config || !(this.config as SwitchmateSwitchPlatformConfig).devices || (this.config as SwitchmateSwitchPlatformConfig).devices.length <= 0) {
+	discoverDevices(): boolean {
+		// check for config
+		if (!this.config || !this.config.devices || (this.config as SwitchmateSwitchPlatformConfig).devices.length === 0) {
 			this.log.error('invalid config, removing all accessories');
 			this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, this.accessories);
+			return false;
 		}
 
+		// remove invalid accessories
+		// we're not removing it from cached this.accessories
+		// because those invalid accessory will not be called with addAccessory
 		for (const accessory of this.accessories) {
-			if (!(this.config as SwitchmateSwitchPlatformConfig).devices.find((config) => config.id === accessory.context.device.id)) {
+			if (!(this.config as SwitchmateSwitchPlatformConfig).devices.find((config) => config.id.toLowerCase() === accessory.context.device.id.toLowerCase())) {
 				this.log.info('%s is not configured, removing...', accessory.displayName);
+				this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
 			}
 		}
+
+		const that = this;
+
+		const scanStopped = function() {
+			if (!that.discoveredAll) {
+				that.log.debug('we have not discovered all configured devices, restarting scan...');
+				noble.removeAllListeners('discover');
+				noble.on('discover', discoverPeripharels);
+				noble.startScanningAsync([POWER_SERVICE_UUID], false).catch((error) => {
+					that.log.error(`failed to start noble scanning: ${error}`);
+				});
+			}
+		};
 
 		const discoveredDevices: Array<string> = [];
-
-		noble.on('scanStop', () => {
-			if (!this.stopScan && discoveredDevices.length !== (this.config as SwitchmateSwitchPlatformConfig).devices.length) {
-				this.log.debug('scan stopped (not by us!) and we have not discovered all devices. restarting...');
-				noble.startScanningAsync();
+		const discoverPeripharels = function (peripharel: noble.Peripheral): boolean {
+			if (that.discoveredAll) {
+				that.log.debug('we have discovered all devices, removing listeners...');
+				noble.removeAllListeners('discover');
+				noble.removeListener('scanStop', scanStopped);
+				noble.stopScanningAsync().catch((error) => {
+					that.log.error(`failed to stop noble scanning: ${error}`);
+				});
+				return true;
 			}
-		});
 
-		noble.on('discover', (peripharel) => {
 			const peripharelId = peripharel.id.toLowerCase();
 
 			if (discoveredDevices.includes(peripharelId)) {
-				this.log.debug('peripheral %s already discovered', peripharelId);
-			} else {
-				const deviceConfig = (this.config as SwitchmateSwitchPlatformConfig).devices.find((config) => config.id.toLowerCase() === peripharelId);
-				if (!deviceConfig) {
-					this.log.debug('peripheral %s is not configured', peripharelId);
-				} else {
-					this.log.debug('discovered peripheral %s, adding to accessories', peripharelId);
-					discoveredDevices.push(peripharelId);
-					this.addAccessory(deviceConfig, peripharel);
-
-					if (discoveredDevices.length === (this.config as SwitchmateSwitchPlatformConfig).devices.length) {
-						this.log.debug('discovered all peripherals, exiting...');
-						this.stopScan = true;
-						noble.stopScanningAsync();
-					}
-				}
+				that.log.debug(`peripheral ${peripharelId} has been discovered`);
+				return true;
 			}
-		});
 
-		this.log.debug('start noble scanning');
-		noble.startScanningAsync();
+			const deviceConfig = (that.config as SwitchmateSwitchPlatformConfig).devices.find((config) => config.id.toLowerCase() === peripharelId);
+			if (!deviceConfig) {
+				that.log.debug(`peripheral ${peripharelId} is not in config`);
+				return false;
+			}
+
+			that.log.info(`discovered peripheral ${peripharelId}, adding to accessories`);
+			discoveredDevices.push(peripharelId);
+			that.addAccessory(deviceConfig, peripharel);
+
+			if (discoveredDevices.length === (that.config as SwitchmateSwitchPlatformConfig).devices.length) {
+				that.log.info('discovered all peripherals');
+				that.discoveredAll = true;
+				noble.removeAllListeners('discover');
+				noble.removeListener('scanStop', scanStopped);
+				noble.stopScanningAsync().catch((error) => {
+					that.log.error(`failed to stop noble scanning: ${error}`);
+				});
+			}
+
+			return true;
+		};
+
+		const startDiscovery = function() {
+			noble.once('scanStop', scanStopped);
+	
+			that.log.debug('start noble scanning');
+			noble.on('discover', discoverPeripharels);
+			noble.startScanningAsync([POWER_SERVICE_UUID], false).catch((error) => {
+				that.log.error(`failed to start noble scanning: ${error}`);
+			});
+		};
+
+		if (noble.state !== 'poweredOn') {
+			this.log.info('noble is not running. waiting for it to power on...');
+			noble.once('stateChange', (state) => {
+				if (state === 'poweredOn') {
+					this.log.info('noble is powered on');
+					startDiscovery();
+				} else {
+					this.log.error(`noble is not powered on but in ${state} state`);
+				}
+			});
+
+			return true;
+		}
+
+		startDiscovery();
+		return true;
 	}
 
-	addAccessory(deviceConfig: { name: string; id: string }, peripharel: noble.Peripheral) {
+	addAccessory(deviceConfig: { name: string; id: string }, peripheral: noble.Peripheral) {
 		const uuid = this.api.hap.uuid.generate(deviceConfig.id);
 
 		const existingAccessory = this.accessories.find(accessory => accessory.UUID === uuid);
@@ -115,7 +173,7 @@ export class SwitchmateSwitchPlatform implements DynamicPlatformPlugin {
 			// the accessory already exists
 			this.log.debug('Restoring existing accessory from cache:', existingAccessory.displayName);
 
-			new SwitchAccessory(this, existingAccessory, new SwitchmateDevice(this.log, peripharel));
+			new SwitchAccessory(this, existingAccessory, new SwitchmateDevice(this.log, peripheral));
 
 			// update accessory cache with any changes to the accessory details and information
 			this.api.updatePlatformAccessories([existingAccessory]);
@@ -132,7 +190,7 @@ export class SwitchmateSwitchPlatform implements DynamicPlatformPlugin {
 
 			// create the accessory handler for the newly create accessory
 			// this is imported from `platformAccessory.ts`
-			new SwitchAccessory(this, accessory, new SwitchmateDevice(this.log, peripharel));
+			new SwitchAccessory(this, accessory, new SwitchmateDevice(this.log, peripheral));
 
 			// link the accessory to your platform
 			this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);

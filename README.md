@@ -34,6 +34,7 @@ You can configure it using [homebridge-config-ui-x](https://www.npmjs.com/packag
 or add below to ```config.json``` manually
 ```json
 {
+    "discoverDelay": 15,
     "devices": [
         {
             "name": "Living Room Switch",
@@ -46,6 +47,11 @@ or add below to ```config.json``` manually
 
 ## TODO
 - [ ] add refresh rate to config
+
+## Known Issue
+### TypeError: Cannot set property 'mtu' of undefined
+See abandonware/noble#164
+
 
 
 
