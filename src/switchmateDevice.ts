@@ -15,7 +15,7 @@ const POWER_SERVICE_UUID = 'a22bd383ebdd49acb2e740eb55f5d0ab';
 const POWER_CURRENT_CHARACTERISTIC_UUID = 'a22b0070ebdd49acb2e740eb55f5d0ab';
 const POWER_TARGET_CHARACTERISTIC_UUID = 'a22b0090ebdd49acb2e740eb55f5d0ab';
 // timeout
-const DEFAULT_TIMEOUT = 10000; // 10s
+const DEFAULT_TIMEOUT = 15000; // 15s
 
 export interface SwitchmateDeviceInformation {
 	manufacturer: string;

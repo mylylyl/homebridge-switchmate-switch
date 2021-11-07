@@ -1,7 +1,7 @@
 {
 	"displayName": "Homebridge Switchmate Switch",
 	"name": "homebridge-switchmate-switch",
-	"version": "1.2.0",
+	"version": "1.2.1",
 	"description": "A homebridge plugin for Switchmate switch",
 	"license": "MIT",
 	"repository": {

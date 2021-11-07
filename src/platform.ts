@@ -87,10 +87,7 @@ export class SwitchmateSwitchPlatform implements DynamicPlatformPlugin {
 			if (!that.discoveredAll) {
 				that.log.debug('we have not discovered all configured devices, restarting scan...');
 				noble.removeAllListeners('discover');
-				noble.on('discover', discoverPeripharels);
-				noble.startScanningAsync([POWER_SERVICE_UUID], false).catch((error) => {
-					that.log.error(`failed to start noble scanning: ${error}`);
-				});
+				startDiscovery();
 			}
 		};
 
